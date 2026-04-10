@@ -1,0 +1,288 @@
+// =============================================================
+// RUET Hall Management System — Prisma Schema
+// Prisma v6.19.3 | PostgreSQL
+// =============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  STUDENT
+  MANAGER
+  ADMIN
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum TokenType {
+  LUNCH
+  DINNER
+}
+
+enum TokenStatus {
+  ACTIVE
+  USED
+  EXPIRED
+}
+
+enum RechargeProvider {
+  BKASH
+  NAGAD
+  ROCKET
+  SSLCOMMERZ
+}
+
+enum RechargeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  AUTO_APPROVED 
+}
+
+
+model Hall {
+  id   String @id @default(cuid())
+  name String @unique
+
+  // Total meal capacity per session (residents + non-residents combined)
+  noonTotalCapacity  Int @default(200)
+  nightTotalCapacity Int @default(200)
+
+  // Slots reserved specifically for non-resident students
+  noonNonResidentCapacity  Int @default(50)
+  nightNonResidentCapacity Int @default(50)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users            User[]
+  tokens           MealToken[]
+  residentStudents ResidentStudentList[]
+}
+
+// =============================================================
+// USER
+// All three roles live in one table.
+// hallId + roomNumber are only filled for residents.
+// balance uses Decimal for financial precision — never Float.
+// =============================================================
+
+model User {
+  id           String  @id @default(cuid())
+  name         String
+  email        String  @unique
+  roll         String  @unique
+  passwordHash String?
+  role         Role    @default(STUDENT)
+  gender       Gender? @default(MALE) // Default to MALE for existing data
+  isResident   Boolean @default(false)
+  onboardingCompleted Boolean @default(false)
+
+  // Only set for residents — verified against ResidentStudentList
+  hallId     String?
+  hall       Hall?   @relation(fields: [hallId], references: [id])
+  roomNumber String?
+
+  // Financial balance — atomic updates only via $transaction
+  balance Decimal @default(0) @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tokens              MealToken[]
+  rechargeRequests    RechargeRequest[]
+  balanceTransactions BalanceTransaction[]
+  notifications       Notification[]
+  // Recharge requests reviewed by this manager/admin
+  reviewedRequests    RechargeRequest[]    @relation("ReviewedBy")
+
+  @@index([roll])  // redundant
+  @@index([email]) // redundant
+  @@index([hallId])
+}
+
+model ResidentStudentList {
+  id         String   @id @default(cuid())
+  roll       String   @unique
+  name       String
+  hallId     String
+  hall       Hall     @relation(fields: [hallId], references: [id])
+  roomNumber String
+  uploadedAt DateTime @default(now())
+
+  @@index([roll])  // redundant
+  @@index([hallId])
+}
+
+// =============================================================
+// MEAL TOKEN
+// One token = one meal for one student on one date.
+// Residents pick their own hall.
+// Non-residents can pick any hall with available non-resident slots.
+// hallId is required — non-residents choose at purchase time.
+// isResident is DENORMALIZED here for fast capacity COUNT queries
+// without needing a User join at peak load.
+//
+// CONCURRENCY: Token purchase wrapped in $transaction with
+// SELECT FOR UPDATE on user row — prevents race conditions.
+//
+// Purchase window: tokens for date D can only be bought
+// on date D-1 before 23:59:59.
+// =============================================================
+
+model MealToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  hallId    String
+  hall      Hall      @relation(fields: [hallId], references: [id])
+  type      TokenType
+  // UUID used as QR code payload — unique per token
+  tokenCode String    @unique @default(uuid())
+  status    TokenStatus @default(ACTIVE)
+  // Denormalized from User for fast non-resident capacity count
+  isResident Boolean
+  // The meal date (always tomorrow when purchased)
+  date      DateTime  @db.Date
+  price     Decimal   @db.Decimal(10, 2)
+  purchasedAt DateTime @default(now())
+  usedAt      DateTime?
+
+  // DB-level guarantee: one token per student per type per day
+  @@unique([userId, type, date])
+
+  // == Critical indexes for peak-load queries ==
+  // "Has this student already bought NOON for tomorrow?"
+  @@index([userId, date])
+  // "How many non-resident NOON tokens sold for Hall X on date D?"
+  @@index([hallId, type, date, isResident])
+  // "All ACTIVE tokens for today" (cron job expiry)
+  @@index([status, date])
+  // "Look up token by QR scan"
+  @@index([tokenCode])
+}
+
+// RECHARGE REQUEST
+// Student submits a TxnID manually.
+// Manager reviews (or SMS webhook auto-approves).
+// Balance is only credited AFTER approval inside a $transaction.
+// transactionId is globally unique — prevents double submissions.
+
+model RechargeRequest {
+  id            String           @id @default(cuid())
+  userId        String
+  user          User             @relation(fields: [userId], references: [id])
+  amount        Decimal          @db.Decimal(10, 2)
+  transactionId String           @unique
+  provider      RechargeProvider
+  status        RechargeStatus   @default(PENDING)
+  reviewedById String?
+  reviewedBy   User?   @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  reviewNote   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // "All PENDING requests" — manager's approval queue
+  @@index([status])
+  // "My recharge history"
+  @@index([userId])
+}
+
+// =============================================================
+// BALANCE TRANSACTION
+// Append-only ledger. Never update, only insert.
+// Created alongside every balance credit (CREDIT) and
+// token purchase (DEBIT) inside the same $transaction.
+//
+// Data retention: raw records deleted after RETENTION_DAYS (default 60).
+// DailyAnalyticsSnapshot preserves aggregated data permanently.
+// =============================================================
+
+model BalanceTransaction {
+  id     String  @id @default(cuid())
+  userId String
+  user   User    @relation(fields: [userId], references: [id])
+  type        String // Credit or debit
+  amount      Decimal @db.Decimal(10, 2)
+  description String
+  createdAt DateTime @default(now())
+  // "My balance history, newest first"
+  @@index([userId, createdAt])
+}
+
+model SmsLog {
+  id           String   @id @default(cuid())
+  from         String
+  body         String
+  parsedTxId   String?
+  parsedAmount Decimal? @db.Decimal(10, 2)
+  matched      Boolean  @default(false)
+  receivedAt   DateTime @default(now())
+
+  @@index([parsedTxId])
+}
+
+// =============================================================
+// DAILY ANALYTICS SNAPSHOT
+// Created by cron job before raw MealToken records are deleted.
+// Kept permanently — admin/manager charts always work.
+// @@unique ensures idempotent snapshot creation.
+// =============================================================
+
+model DailyAnalyticsSnapshot {
+  id        String    @id @default(cuid())
+  date      DateTime  @db.Date
+  hallId    String
+  tokenType TokenType
+
+  totalSold    Int
+  totalUsed    Int
+  totalExpired Int
+  totalRevenue Decimal @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+
+  @@unique([date, hallId, tokenType])
+  @@index([date])
+}
+
+// =============================================================
+// SETTINGS
+// Key-value store for admin-configurable values.
+// Avoids .env changes for things like token prices.
+//
+// Seeded defaults:
+//   NOON_PRICE           = "40"
+//   NIGHT_PRICE          = "45"
+//   RETENTION_DAYS       = "60"    ← raw records deleted after N days
+//   ARCHIVE_WARNING_DAYS = "30"    ← notify student N days before deletion
+// =============================================================
+
+model Settings {
+  key   String @id
+  value String
+}
+
+model Notification {
+  id      String  @id @default(cuid())
+  userId  String
+  user    User    @relation(fields: [userId], references: [id])
+  title   String
+  message String
+  isRead  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  // "Unread notifications for student X"
+  @@index([userId, isRead])
+}
