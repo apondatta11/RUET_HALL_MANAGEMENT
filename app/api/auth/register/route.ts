@@ -32,6 +32,24 @@ export async function POST(req: NextRequest) {
 
     const { name, email, password } = parsed.data;
 
+    // ── PROVIDER & ACCOUNT CHECK ──
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existingUser) {
+      if (!existingUser.passwordHash) {
+        return NextResponse.json(
+          { error: { email: ["This email is already associated with a Google account. Please log in with Google."] } },
+          { status: 409 }
+        );
+      }
+      return NextResponse.json(
+        { error: { email: ["This email is already registered. Please log in with your password."] } },
+        { status: 409 }
+      );
+    }
+
     if (!validateRUETEmail(email)) {
       return NextResponse.json(
         { error: { email: ["Only RUET student emails (@student.ruet.ac.bd) are allowed"] } },

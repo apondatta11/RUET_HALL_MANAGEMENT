@@ -1,29 +1,30 @@
 "use client";
 
-import { useState, useEffect, createContext, useContext } from "react";
+import { useState, useEffect } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { setTheme } from "@/store/slices/uiSlice";
 
-interface ThemeContextType {
-  theme: "light" | "dark";
-  toggleTheme: () => void;
-}
-
-const ThemeContext = createContext<ThemeContextType>({
-  theme: "light",
-  toggleTheme: () => {},
-});
-
+/**
+ * Custom hook to abstract Redux calls.
+ * Components can use this instead of useSelector/useDispatch directly.
+ */
 export function useTheme() {
-  const context = useContext(ThemeContext);
-  return context;
+  const dispatch = useAppDispatch();
+  const theme = useAppSelector((state) => state.ui.theme);
+
+  const toggleTheme = () => {
+    dispatch(setTheme(theme === "light" ? "dark" : "light"));
+  };
+
+  return { theme, toggleTheme };
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch();
-  const uiState = useAppSelector((state) => state.ui);
+  const uiTheme = useAppSelector((state) => state.ui.theme);
   const [mounted, setMounted] = useState(false);
 
+  // it runs first when the app loads & themeprovider is rendered
   useEffect(() => {
     setMounted(true);
     // Initialize theme from localStorage or system preference
@@ -36,25 +37,17 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       dispatch(setTheme("light"));
     }
   }, [dispatch]);
-
+  // The first useEffect changes redux state , then the 2nd useEffect runs as 1st useEffect depends on dispatch, so it renders again & runs the 2nd useEffect to set localStorage & tailwind classes to body
   useEffect(() => {
     if (mounted) {
-      localStorage.setItem("theme", uiState.theme);
-      if (uiState.theme === "dark") {
+      localStorage.setItem("theme", uiTheme);
+      if (uiTheme === "dark") {
         document.documentElement.classList.add("dark");
       } else {
         document.documentElement.classList.remove("dark");
       }
     }
-  }, [uiState.theme, mounted]);
+  }, [uiTheme, mounted]);
 
-  const toggleTheme = () => {
-    dispatch(setTheme(uiState.theme === "light" ? "dark" : "light"));
-  };
-
-  return (
-    <ThemeContext.Provider value={{ theme: uiState.theme, toggleTheme }}>
-      {children}
-    </ThemeContext.Provider>
-  );
+  return <>{children}</>;
 }

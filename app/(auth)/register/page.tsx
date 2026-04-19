@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { FcGoogle } from "react-icons/fc";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
-import { Toaster, toast } from "react-hot-toast";
+import { toast } from "react-hot-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,7 @@ import { registerUser, completeOnboarding } from "@/store/slices/authSlice";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 
-
+// schema validation with zod for register
 const registerSchema = z.object({
   name: z.string().min(1, "Full name is required").min(2, "Name must be at least 2 characters").max(50, "Name must be at most 50 characters"),
   email: z.string().min(1, "RUET email is required").email("Invalid email format"),
@@ -38,6 +38,7 @@ const registerSchema = z.object({
   path: ["confirmPassword"],
 });
 
+// stepper form to get further info from student
 const onboardingSchema = z.object({
   isResident: z.boolean(),
   gender: z.enum(["MALE", "FEMALE"]).optional(),
@@ -70,7 +71,7 @@ const FORM_FIELDS: Array<
     { name: "email", label: "RUET Email", placeholder: "xxxxxxx@student.ruet.ac.bd", type: "email" },
     { name: "password", label: "Password", placeholder: "Create a password", type: "password", showPasswordToggle: true, passwordField: "password" },
     { name: "confirmPassword", label: "Confirm Password", placeholder: "Confirm your password", type: "password", showPasswordToggle: true, passwordField: "confirmPassword" },
-];
+  ];
 
 const PASSWORD_REQUIREMENTS = {
   minLength: { label: "At least 8 characters", check: (v: string) => v.length >= 8 },
@@ -85,7 +86,7 @@ function RegisterPageContent() {
   const { data: session, update: updateSession } = useSession();
   const dispatch = useAppDispatch();
   const { isLoading: isAuthLoading } = useAppSelector((state) => state.auth);
-  
+
   const [activeStep, setActiveStep] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -100,24 +101,11 @@ function RegisterPageContent() {
   }, [googleError]);
 
   useEffect(() => {
-    if (session?.user) {
-      // isRUETEmail comes from jwt callback when the provider is google
-      // const isRUETEmail = (session.user as unknown as { isRUETEmail?: boolean }).isRUETEmail;
-      // session.user as unknown as { isRUETEmail?: boolean } is used for type assertion because isRUETEmail is not defined in the session.user type 
-
-      // if (isRUETEmail === false) {
-      //   toast.error("Please sign in with your RUET student email (@student.ruet.ac.bd)");
-      //   signOut({ callbackUrl: "/register" });
-      //   return;
-      // }
-
-      if (!session.user.onboardingCompleted) {
-        setActiveStep(1);
-      } else if (session.user.onboardingCompleted) {
-        router.push("/dashboard");
-      }
+    // If the user lands here but isn't onboarded, enforce they see step 1
+    if (session?.user && !session?.user?.onboardingCompleted) {
+      setActiveStep(1);
     }
-  }, [session, router]);
+  }, [session]);
 
   const {
     control,
@@ -163,9 +151,38 @@ function RegisterPageContent() {
   const onRegisterSubmit = async (data: RegisterFormData) => {
     try {
       const resultAction = await dispatch(registerUser(data));
-      
+
       if (registerUser.rejected.match(resultAction)) {
-        throw new Error(resultAction.payload as string);
+        // The API returns field-level errors like { email: ["msg"] } or { general: ["msg"] }
+        // We extract the first readable message from whatever shape the error is.
+        const payload = resultAction.payload;
+        let errorMessage = "Registration failed";
+
+
+        if (typeof payload === "string") {
+          errorMessage = payload;
+        } else if (payload && typeof payload === "object") {
+          const messages = Object.values(payload)
+            .filter(Array.isArray)
+            .flat()
+            .filter((msg): msg is string => typeof msg === "string");
+
+          if (messages.length > 0) {
+            errorMessage = messages[0];
+          }
+        }
+
+        toast.error(errorMessage);
+
+        // If the email is already registered (any provider), redirect to login
+        if (
+          typeof payload === "object" &&
+          payload !== null &&
+          "email" in (payload as object)
+        ) {
+          setTimeout(() => router.push("/login"), 1500);
+        }
+        return;
       }
 
       // After account creation, sign in through credentials provider
@@ -181,7 +198,6 @@ function RegisterPageContent() {
         router.push("/login");
         return;
       }
-
       toast.success("Account created! Please finalize your profile.");
       setActiveStep(1);
     } catch (error: any) {
@@ -189,17 +205,47 @@ function RegisterPageContent() {
     }
   };
 
+
   const onOnboardingSubmit = async (data: OnboardingFormData) => {
     try {
       const resultAction = await dispatch(completeOnboarding(data));
-      
+
       if (completeOnboarding.rejected.match(resultAction)) {
-        throw new Error(resultAction.payload as string);
+        const payload = resultAction.payload;
+        let errorMessage = "Failed to complete onboarding";
+
+        if (typeof payload === "string") {
+          errorMessage = payload;
+        } else if (payload && typeof payload === "object") {
+          const messages = Object.values(payload)
+            .filter(Array.isArray)
+            .flat()
+            .filter((msg): msg is string => typeof msg === "string");
+
+          if (messages.length > 0) {
+            errorMessage = messages[0];
+          } else if ('error' in (payload as any) && typeof (payload as any).error === "string") {
+            errorMessage = (payload as any).error;
+          }
+        }
+        toast.error(errorMessage);
+        return;
       }
 
       toast.success("Profile fully completed!");
-      await updateSession();
-      router.push("/dashboard");
+      
+      // Pass a dummy or actual payload to updateSession to force `trigger: "update"` 
+      // in the NextAuth JWT callback, which will generate a new secure cookie.
+      await updateSession({ onboardingCompleted: true });
+
+      const userRole= session?.user?.role;
+      if(userRole==="MANAGER"){
+        router.push("/manager/dashboard");
+      }else if(userRole==="ADMIN"){
+        router.push("/admin/dashboard");
+      }else{
+        router.push("/student/dashboard");
+      }
     } catch (error: any) {
       toast.error(error.message || "Failed to save residency details");
     }
@@ -273,7 +319,7 @@ function RegisterPageContent() {
         {showError && (
           <p className="text-xs text-red-500 mt-1">{error.message as string}</p>
         )}
-
+        {/* password requirements block */}
         {field.name === "password" && (
           <div className="pt-2 space-y-1">
             <div className="flex flex-wrap gap-2">
@@ -445,6 +491,7 @@ function RegisterPageContent() {
                     <select
                       {...controllerField}
                       id="hallName"
+                      // will only show if gender is selected
                       disabled={!gender}
                       className="w-full h-10 px-3 rounded-md border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
@@ -468,8 +515,9 @@ function RegisterPageContent() {
                     <Input
                       {...controllerField}
                       id="roomNumber"
-                      placeholder="e.g., 204"
-                      className="border-2 focus:ring-2 focus:ring-primary transition-all"
+                      placeholder={gender ? "e.g., 204" : "Select gender first"}
+                      disabled={!gender}
+                      className="border-2 focus:ring-2 focus:ring-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                   )}
                 />
@@ -490,7 +538,6 @@ function RegisterPageContent() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4">
-      <Toaster position="top-center" />
       <Card className="w-full max-w-lg shadow-[0_32px_64px_-16px_rgba(0,0,0,0.1)] border-0 overflow-hidden bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl">
         <CardHeader className="space-y-2 text-center pb-2">
           <CardTitle className="text-3xl font-black tracking-tight text-slate-900 dark:text-white">

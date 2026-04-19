@@ -69,6 +69,7 @@ export function Navbar() {
 
   const role = session?.user?.role || "STUDENT";
   const userLinks = NAV_CONFIG[role as keyof typeof NAV_CONFIG] || [];
+  // type of NAV_CONFIG is Object & key of that objects are the roles 
   const userImage = session?.user?.image;
   const userName = session?.user?.name || "User";
 
@@ -95,6 +96,7 @@ export function Navbar() {
               </Link>
 
               <DropdownMenu>
+                {/* part of the profile picture */}
                 <DropdownMenuTrigger asChild>
                   <button className="outline-none">
                     <Avatar className="h-9 w-9 border-2 border-transparent hover:border-primary transition-all">
@@ -106,6 +108,7 @@ export function Navbar() {
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56 mt-2">
+                {/* showing the user info */}
                   <DropdownMenuLabel className="font-normal">
                     <div className="flex flex-col space-y-1">
                       <p className="text-sm font-bold leading-none">{userName}</p>
@@ -115,6 +118,7 @@ export function Navbar() {
                     </div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
+                  {/* showing the user profile and history */}
                   <DropdownMenuItem asChild>
                     <Link href="/profile" className="cursor-pointer">
                       <User className="mr-2 h-4 w-4" />
@@ -128,6 +132,7 @@ export function Navbar() {
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
+                  {/* logout button */}
                   <DropdownMenuItem 
                     onClick={() => signOut({ callbackUrl: "/login" })}
                     className="text-red-500 focus:text-red-500 cursor-pointer"
@@ -139,6 +144,7 @@ export function Navbar() {
               </DropdownMenu>
             </>
           ) : (
+            // login and register buttons
             <div className="flex items-center gap-2">
               <NavbarButton as={Link} href="/login" variant="secondary">
                 Login
@@ -154,6 +160,7 @@ export function Navbar() {
       {/* Mobile Navigation */}
       <MobileNav>
         <MobileNavHeader className="px-4">
+          {/* the toggler for mobile navbar */}
           <MobileNavToggle
             isOpen={isMobileMenuOpen}
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -165,7 +172,8 @@ export function Navbar() {
 
           {session ? (
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+              {/* avatar  */}
+              <DropdownMenuTrigger asChild> 
                 <button className="outline-none relative">
                   <Avatar className="h-8 w-8">
                     <AvatarImage src={userImage || ""} alt={userName} />
@@ -179,9 +187,10 @@ export function Navbar() {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-64">
+                {/* settings and account */}
                 <DropdownMenuLabel className="font-bold">Settings & Account</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                
+                {/* theme toggle button */}
                 <DropdownMenuItem 
                   onClick={toggleTheme}
                   className="flex items-center justify-between cursor-pointer"
@@ -192,7 +201,7 @@ export function Navbar() {
                   </div>
                   <span className="text-xs text-muted-foreground">{theme === "dark" ? "Dark" : "Light"}</span>
                 </DropdownMenuItem>
-
+                  {/* notification button */}
                 <DropdownMenuItem asChild>
                   <Link href="/notifications" className="flex items-center justify-between cursor-pointer">
                     <div className="flex items-center">
@@ -208,13 +217,14 @@ export function Navbar() {
                 </DropdownMenuItem>
 
                 <DropdownMenuSeparator />
-                
+                {/* user profile button */}
                 <DropdownMenuItem asChild>
                   <Link href="/profile" className="cursor-pointer">
                     <User className="mr-2 h-4 w-4" />
                     <span>My Profile</span>
                   </Link>
                 </DropdownMenuItem>
+                {/* user history button */}
                 <DropdownMenuItem asChild>
                   <Link href="/history" className="cursor-pointer">
                     <History className="mr-2 h-4 w-4" />
@@ -223,7 +233,7 @@ export function Navbar() {
                 </DropdownMenuItem>
                 
                 <DropdownMenuSeparator />
-                
+                {/* logout button */}
                 <DropdownMenuItem 
                   onClick={() => signOut({ callbackUrl: "/login" })}
                   className="text-red-500 focus:text-red-500 cursor-pointer"
@@ -244,7 +254,7 @@ export function Navbar() {
             </div>
           )}
         </MobileNavHeader>
-
+        {/* left menu bar */}
         <MobileNavMenu
           isOpen={isMobileMenuOpen}
           onClose={() => setIsMobileMenuOpen(false)}

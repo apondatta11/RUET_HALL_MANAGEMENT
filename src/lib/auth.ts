@@ -81,26 +81,42 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         if (parsed.data.type === "email") {
           const { email, password } = parsed.data;
-          // RUET validation for credentials login too
-          if (!validateRUETEmail(email)) return null;
-          const user = await prisma.user.findUnique({
+
+          // ── STAFF-FIRST LOGIC ──
+          // We check the database first to see if this is a pre-registered Admin or Manager.
+          // This allows them to bypass the strict student roll-number validation.
+          const dbuser = await prisma.user.findUnique({
             where: { email },
           });
+          if(!dbuser) return null;
+          // ── PROVIDER ISOLATION ──
+          // If the user exists but has no password, it means they registered via Google.
+          // We return null here — the check-provider API handles showing the correct toast.
+          // Also managers & admins are also required to login with their password.
+          if (!dbuser.passwordHash) return null;
+          // if found , check if the user is staff or not
+          const isStaff = dbuser && (dbuser.role === "ADMIN" || dbuser.role === "MANAGER");
 
-          if (!user || !user.passwordHash) return null;
-
-          const isValid = await bcrypt.compare(password, user.passwordHash);
+          if (!isStaff) {
+            // If not staff, enforce strict RUET student email validation
+            if (!validateRUETEmail(email)) return null;
+            // meaning the user was not either a student or stuff, so returning null
+          }
+          // at this stage, the user who tried to access the login page is either a staff or a student.
+          // if (!dbuser || !dbuser.passwordHash) return null;
+          // if the user is found but has no password, it means the user is not registered yet.
+          const isValid = await bcrypt.compare(password, dbuser.passwordHash);
           if (!isValid) return null;
-
+          
           return {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            isResident: user.isResident,
-            onboardingCompleted: user.onboardingCompleted,
-            hallId: user.hallId,
-            roomNumber: user.roomNumber,
+            id: dbuser.id,
+            name: dbuser.name,
+            email: dbuser.email,
+            role: dbuser.role,
+            isResident: dbuser.isResident,
+            onboardingCompleted: dbuser.onboardingCompleted,
+            hallId: dbuser.hallId,
+            roomNumber: dbuser.roomNumber,
           };
         }
         return null;
@@ -109,7 +125,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 ],
 
   callbacks: {
-    async jwt({ token, user, account }) {
+    async jwt({ token, user, account, trigger, session }) {
+      // 1. Initial Sign-In
       if (user) {
         token.id = user.id as string;
         token.role = user.role ?? "STUDENT";
@@ -120,11 +137,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.name = user.name;
       }
 
+      // 2. Google OAuth Specifics (Initial login only)
       if (account?.provider === "google" && user?.email) {
-        // const isRUETEmail = validateRUETEmail(user.email);
-        // token.isRUETEmail = isRUETEmail;
-        
-        // if (user?.email) {
           const dbUser = await prisma.user.findUnique({
             where: { email: user.email },
           });
@@ -137,7 +151,30 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             token.hallId = dbUser.hallId;
             token.roomNumber = dbUser.roomNumber;
           }
-        // }
+      }
+
+      // 3. Handle Session Updates (e.g. after onboarding)
+      // Read the data explicitly passed through `updateSession({ onboardingCompleted: true })`
+      if (trigger === "update" && session) {
+        if (typeof session.onboardingCompleted !== "undefined") {
+           token.onboardingCompleted = session.onboardingCompleted;
+        }
+        
+        // Also fetch from DB just to be perfectly synced, but ensure the token 
+        // respects the flags explicitly passed in first.
+        if (token.id) {
+          const dbUser = await prisma.user.findUnique({
+            where: { id: token.id as string },
+          });
+
+          if (dbUser) {
+            token.role = dbUser.role ?? "STUDENT";
+            token.isResident = dbUser.isResident;
+            token.onboardingCompleted = dbUser.onboardingCompleted;
+            token.hallId = dbUser.hallId;
+            token.roomNumber = dbUser.roomNumber;
+          }
+        }
       }
 
       return token;
@@ -151,34 +188,50 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.onboardingCompleted = token.onboardingCompleted as boolean;
         session.user.hallId = token.hallId as string | null | undefined;
         session.user.roomNumber = token.roomNumber as string | null | undefined;
-        // if (typeof token.isRUETEmail === "boolean") {
-        //   (session.user as unknown as { isRUETEmail: boolean }).isRUETEmail = token.isRUETEmail;
-        // }
       }
       return session;
     },
 
     async signIn({ user, account }) {
       if (account?.provider !== "google") return true;
-        const email = user.email;
+      const email = user.email;
 
-        if (!email || !validateRUETEmail(email)) {
-            return "/register?error=invalid_ruet_email";
-        }
-        const roll = email.split("@")[0];
+      if (!email) return false;
 
-        await prisma.user.upsert({
-          where: { email },
-          update: {}, 
-          create: {
-            email,
-            name: user.name ?? "New Student",
-            roll,
-            role: "STUDENT",
-            isResident: false,
-            onboardingCompleted: false, 
-          }
-        });
+      // ── PROVIDER ISOLATION ──
+      // Check if this user already has a password account. 
+      // If they do, we block Google sign-in to prevent account splitting.
+      const existingUser = await prisma.user.findUnique({
+        where: { email },
+      });
+
+      if (existingUser?.passwordHash) {
+        return "/login?error=use_credentials";
+      }
+
+      // ── STAFF & STUDENT LOGIC ──
+      // 1. If user is already in DB as staff (Admin/Manager), allow login even with personal Gmail.
+      const isStaff = existingUser && (existingUser.role === "ADMIN" || existingUser.role === "MANAGER");
+
+      // 2. If not staff, enforce strict RUET student email validation.
+      if (!isStaff && !validateRUETEmail(email)) {
+        return "/register?error=invalid_ruet_email";
+      }
+
+      const roll = email.split("@")[0];
+
+      await prisma.user.upsert({
+        where: { email },
+        update: {},
+        create: {
+          email,
+          name: user.name ?? "New User",
+          roll: isStaff ? `STAFF_${Date.now()}` : roll, // Staff don't have traditional RUET rolls
+          role: existingUser?.role ?? "STUDENT",
+          isResident: false,
+          onboardingCompleted: false,
+        },
+      });
 
       return true;
     },

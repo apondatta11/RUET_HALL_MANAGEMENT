@@ -11,10 +11,14 @@ const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL:      z.string().url("Must be a valid URL"),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1, "Supabase anon key is required"),
   SUPABASE_SERVICE_ROLE_KEY:     z.string().min(1, "Supabase service role key is required"),
+  NEXT_PUBLIC_APP_URL:           z.string().url("Must be a valid URL"),
 
   // NextAuth
   NEXTAUTH_SECRET: z.string().min(32, "NEXTAUTH_SECRET must be at least 32 characters"),
   NEXTAUTH_URL:    z.string().url("Must be a valid URL"),
+  //Google
+  GOOGLE_CLIENT_ID: z.string().min(1, "GOOGLE_CLIENT_ID is required"),
+  GOOGLE_CLIENT_SECRET: z.string().min(1, "GOOGLE_CLIENT_SECRET is required"),
 
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 });

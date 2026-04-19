@@ -28,6 +28,17 @@ const initialState: AuthState = {
   isLoading: false, 
 };
 
+export const loginUser = createAsyncThunk(
+  "auth/login",
+  async (credentials: any, { rejectWithValue }) => {
+    try {
+      return credentials;
+    } catch (err: any) {
+      return rejectWithValue(err.message || "Login failed");
+    }
+  }
+);
+
 export const registerUser = createAsyncThunk(
   "auth/register",
   async (data: any, { rejectWithValue }) => {
@@ -103,6 +114,16 @@ const authSlice = createSlice({
         }
       })
       .addCase(completeOnboarding.rejected, (state) => {
+        state.isLoading = false;
+      })
+      // Login
+      .addCase(loginUser.pending, (state) => {
+        state.isLoading = true;
+      })
+      .addCase(loginUser.fulfilled, (state) => {
+        state.isLoading = false;
+      })
+      .addCase(loginUser.rejected, (state) => {
         state.isLoading = false;
       });
   },

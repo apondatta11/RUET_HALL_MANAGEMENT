@@ -5,7 +5,7 @@ import { signIn, signOut, useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FcGoogle } from "react-icons/fc";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
-import { Toaster, toast } from "react-hot-toast";
+import { toast } from "react-hot-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,9 @@ import { Separator } from "@/components/ui/separator";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { loginUser, setLoading } from "@/store/slices/authSlice";
+import Link from "next/link";
 
 const loginSchema = z.object({
   email: z.string().min(1, "Email is required").email("Invalid email format"),
@@ -37,7 +40,8 @@ function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session } = useSession();
-  const [isLoading, setIsLoading] = useState(false);
+  const dispatch = useAppDispatch();
+  const { isLoading: isAuthLoading } = useAppSelector((state) => state.auth);
   const [showPassword, setShowPassword] = useState(false);
 
   const googleError = searchParams.get("error");
@@ -45,23 +49,28 @@ function LoginPageContent() {
   useEffect(() => {
     if (googleError === "invalid_ruet_email") {
       toast.error("Please sign in with your RUET student email (@student.ruet.ac.bd)");
+      router.replace("/login");
     }
-  }, [googleError]);
+    // ── PROVIDER ISOLATION: password-only user tried Google ──
+    if (googleError === "use_credentials") {
+      toast.error("This account uses password login. Please sign in with your email and password.");
+      router.replace("/login");
+    }
+  }, [googleError, router]);
 
   useEffect(() => {
     if (session?.user) {
-      const isRUETEmail = (session.user as unknown as { isRUETEmail?: boolean }).isRUETEmail;
-      
-      if (isRUETEmail === false) {
-        toast.error("Please sign in with your RUET student email (@student.ruet.ac.bd)");
-        signOut({ callbackUrl: "/login" });
-        return;
-      }
-
       if (!session.user.onboardingCompleted) {
         router.push("/register");
       } else {
-        router.push("/dashboard");
+        const userRole=session.user.role;
+        if(userRole==="MANAGER"){
+          router.push("/manager/dashboard");
+        }else if(userRole==="ADMIN"){
+          router.push("/admin/dashboard");
+        }else{
+          router.push("/student/dashboard");
+        }
       }
     }
   }, [session, router]);
@@ -80,8 +89,27 @@ function LoginPageContent() {
   });
 
   const onLoginSubmit = async (data: LoginFormData) => {
-    setIsLoading(true);
     try {
+      // 1. Trigger global loading via Redux
+      await dispatch(loginUser(data));
+
+      // ── PROVIDER PRE-CHECK ──
+      // Before attempting signIn, check if this user exists and which provider they used.
+      // This lets us show "Please login with Google" instead of a generic error.
+      const checkRes = await fetch("/api/auth/check-provider", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: data.email.toLowerCase().trim() }),
+      });
+      const { provider } = await checkRes.json();
+
+      if (provider === "google") {
+        toast.error("This account is linked to Google. Please sign in with Google.");
+        dispatch(setLoading(false));
+        return;
+      }
+
+      // 2. Perform NextAuth Sign In
       const result = await signIn("credentials", {
         type: "email",
         email: data.email.toLowerCase().trim(),
@@ -91,19 +119,19 @@ function LoginPageContent() {
 
       if (result?.error) {
         toast.error("Invalid email or password");
+        dispatch(setLoading(false));
       } else {
         toast.success("Welcome back!");
       }
     } catch (error: unknown) {
       const err = error as { response?: { data?: { error?: string } } };
-      toast.error(err.response?.data?.error || "Something went wrong");
-    } finally {
-      setIsLoading(false);
+      toast.error(err.response?.data?.error || "Login failed");
+      dispatch(setLoading(false));
     }
   };
 
   const handleGoogleLogin = async () => {
-    setIsLoading(true);
+    dispatch(setLoading(true));
     await signIn("google", { callbackUrl: "/login" });
   };
 
@@ -117,9 +145,9 @@ function LoginPageContent() {
         {field.name === "password" && (
           <div className="flex items-center justify-between">
             <Label htmlFor={field.name}>{field.label}</Label>
-            <a href="/forgot-password" className="text-xs text-slate-500 hover:text-blue-600">
+            <Link href="/forgot-password" className="text-xs text-slate-500 hover:text-blue-600">
               Forgot password?
-            </a>
+            </Link>
           </div>
         )}
         {!field.showPasswordToggle && <Label htmlFor={field.name}>{field.label}</Label>}
@@ -133,7 +161,7 @@ function LoginPageContent() {
                 id={field.name}
                 type={field.showPasswordToggle && showPassword ? "text" : field.type}
                 placeholder={field.placeholder}
-                disabled={isLoading}
+                disabled={isAuthLoading}
                 className={showError ? "border-red-500 focus:border-red-500" : ""}
               />
             )}
@@ -157,7 +185,6 @@ function LoginPageContent() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-800 p-4">
-      <Toaster position="top-center" />
       <Card className="w-full max-w-md shadow-2xl border-0">
         <CardHeader className="space-y-1">
           <CardTitle className="text-2xl font-bold text-center">Welcome Back</CardTitle>
@@ -171,15 +198,15 @@ function LoginPageContent() {
               <Separator className="w-full" />
             </div>
             <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-white dark:bg-slate-900 px-2 text-slate-500">Manual Signin</span>
+              <span className="bg-white dark:bg-slate-900 px-2 text-slate-500 font-medium tracking-wider">Credentials</span>
             </div>
           </div>
 
           <form onSubmit={handleSubmit(onLoginSubmit)} className="space-y-4">
-            {Object.entries(FORM_FIELDS).map(([_, field]) => renderFormField(field))}
+            {FORM_FIELDS.map((field) => renderFormField(field))}
 
-            <Button type="submit" className="w-full h-11" disabled={isLoading}>
-              {isLoading ? "Signing in..." : "Sign In"}
+            <Button type="submit" className="w-full h-11 font-bold transition-all" disabled={isAuthLoading}>
+              {isAuthLoading ? "Signing in..." : "Sign In"}
             </Button>
           </form>
 
@@ -188,24 +215,24 @@ function LoginPageContent() {
               <Separator className="w-full" />
             </div>
             <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-white dark:bg-slate-900 px-2 text-slate-500">Or continue with</span>
+              <span className="bg-white dark:bg-slate-900 px-2 text-slate-500 font-medium tracking-wider">Identity Provider</span>
             </div>
           </div>
 
           <Button
             type="button"
             variant="outline"
-            className="w-full h-11"
+            className="w-full h-11 font-medium transition-all"
             onClick={handleGoogleLogin}
-            disabled={isLoading}
+            disabled={isAuthLoading}
           >
             <FcGoogle className="w-5 h-5 mr-2" />
             Continue with Google
           </Button>
 
-          <p className="text-center text-sm text-slate-500">
+          <p className="text-center text-sm text-slate-500 pt-2">
             Don&apos;t have an account?{" "}
-            <a href="/register" className="text-blue-600 hover:underline font-medium">
+            <a href="/register" className="text-blue-600 hover:text-blue-700 hover:underline font-bold transition-colors">
               Sign up
             </a>
           </p>

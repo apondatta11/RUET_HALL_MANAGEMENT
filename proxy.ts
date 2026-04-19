@@ -11,18 +11,18 @@ const PUBLIC_ROUTES = [
 
 const AUTH_ROUTES = ["/login", "/register", "/verify-otp"];
 
-export default auth(async (req) => {
+export default auth((req) => {
   const { nextUrl } = req;
   const pathname = nextUrl.pathname;
   
-  const session = await auth();
+  const session = req.auth;
   const isLoggedIn = !!session;
 
   const userRole = session?.user?.role as string | undefined;
   const onboardingCompleted = session?.user?.onboardingCompleted as boolean | undefined;
 
   const isPublicRoute = PUBLIC_ROUTES.some(
-    (r) => pathname === r || pathname.startsWith(`${r}/`)
+    (r) => pathname === r || (r !== "/" && pathname.startsWith(`${r}/`))
   );
   
   const isAuthApiRoute = pathname.startsWith("/api/auth");
@@ -49,26 +49,35 @@ export default auth(async (req) => {
   }
 
   // ── Onboarding Flow Protection ─────────────────────
-  const isOnboardingRoute = pathname.startsWith("/onboarding");
+  // changes 1 
+  // Onboarding stepper lives inside /register (Step 2), not a separate route
+  const isOnboardingRoute = pathname.startsWith("/register");
   
   if (isLoggedIn && !onboardingCompleted && !isOnboardingRoute && !isPublicRoute) {
-    return NextResponse.redirect(new URL("/onboarding", nextUrl.origin));
+    return NextResponse.redirect(new URL("/register", nextUrl.origin));
   }
 
   // ── Logged in → don't show auth pages ──────────────
+  // EXCEPT: allow /register when onboarding is incomplete (the stepper lives there)
   if (
     isLoggedIn &&
     AUTH_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`))
   ) {
+    // changes 2
+    // If onboarding isn't done and user is on /register, let them stay
+    if (!onboardingCompleted && pathname.startsWith("/register")) {
+      return NextResponse.next();
+    }
     if (!onboardingCompleted) {
-      return NextResponse.redirect(new URL("/onboarding", nextUrl.origin));
+      return NextResponse.redirect(new URL("/register", nextUrl.origin));
     }
     return NextResponse.redirect(
       new URL(getDashboardPath(userRole), nextUrl.origin)
     );
-  }
+  } 
 
   // ── Role-based protection ───────────────────────────
+  // changes 3
   if (isLoggedIn && onboardingCompleted) {
     // MANAGER pages — only MANAGER role
     if (pathname.startsWith("/manager") && userRole !== "MANAGER") {

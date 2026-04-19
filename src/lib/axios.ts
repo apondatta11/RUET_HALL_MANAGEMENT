@@ -1,6 +1,6 @@
 // src/lib/axios.ts
 import axios, { AxiosError } from "axios";
-// import { env } from "./env";
+import { env } from "./env";
 import { ApiError } from "@/types";
 
 const api = axios.create({
