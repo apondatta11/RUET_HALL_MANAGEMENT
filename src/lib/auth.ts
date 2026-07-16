@@ -156,8 +156,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // 3. Handle Session Updates (e.g. after onboarding)
       // Read the data explicitly passed through `updateSession({ onboardingCompleted: true })`
       if (trigger === "update" && session) {
+        // This ensures that the session is updated with the new data.
         if (typeof session.onboardingCompleted !== "undefined") {
-           token.onboardingCompleted = session.onboardingCompleted;
+          token.onboardingCompleted = session.onboardingCompleted;
         }
         
         // Also fetch from DB just to be perfectly synced, but ensure the token 
@@ -170,7 +171,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           if (dbUser) {
             token.role = dbUser.role ?? "STUDENT";
             token.isResident = dbUser.isResident;
-            token.onboardingCompleted = dbUser.onboardingCompleted;
+            // if session.onboardingCompleted is undefined, it means it was not updated, so we use the db value
+            token.onboardingCompleted = session.onboardingCompleted ?? dbUser.onboardingCompleted;
             token.hallId = dbUser.hallId;
             token.roomNumber = dbUser.roomNumber;
           }
@@ -216,6 +218,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // 2. If not staff, enforce strict RUET student email validation.
       if (!isStaff && !validateRUETEmail(email)) {
         return "/register?error=invalid_ruet_email";
+        // this returns this url to the client side
       }
 
       const roll = email.split("@")[0];

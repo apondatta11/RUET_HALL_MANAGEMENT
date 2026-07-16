@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider, QueryProvider, ReduxProvider, ThemeProvider } from "@/components/providers";
 import { Toaster } from "react-hot-toast";
+import { NavbarWrapper } from "@/components/layout/NavbarWrapper";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,7 +30,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-full flex flex-col overflow-x-hidden w-full">
         <ReduxProvider>
           <ThemeProvider>
             <AuthProvider>
@@ -50,6 +51,7 @@ export default function RootLayout({
                     },
                   }}
                 />
+                <NavbarWrapper />
                 {children}
               </QueryProvider>
             </AuthProvider>

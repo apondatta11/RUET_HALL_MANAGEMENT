@@ -176,9 +176,9 @@ function RegisterPageContent() {
 
         // If the email is already registered (any provider), redirect to login
         if (
+          payload &&
           typeof payload === "object" &&
-          payload !== null &&
-          "email" in (payload as object)
+          Array.isArray((payload as any).email)
         ) {
           setTimeout(() => router.push("/login"), 1500);
         }
@@ -237,6 +237,7 @@ function RegisterPageContent() {
       // Pass a dummy or actual payload to updateSession to force `trigger: "update"` 
       // in the NextAuth JWT callback, which will generate a new secure cookie.
       await updateSession({ onboardingCompleted: true });
+      // this triggers update in auth.ts
 
       const userRole= session?.user?.role;
       if(userRole==="MANAGER"){
@@ -253,6 +254,7 @@ function RegisterPageContent() {
 
   const handleGoogleSignUp = async () => {
     await signIn("google", { callbackUrl: "/register" });
+    // if the user is not onboarded, it will redirect to the register page for the onboarding
   };
 
   const renderFormField = (field: typeof FORM_FIELDS[0]) => {
