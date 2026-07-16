@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "react-hot-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { apiPost } from "@/lib/axios";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -107,21 +108,16 @@ export default function TokenShopClient({
   const handlePurchase = async (tokenType: "LUNCH" | "DINNER") => {
     setIsLoading(tokenType);
     try {
-      const res = await fetch("/api/student/tokens/buy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tokenType, hallId: selectedHallId }),
+      const data = await apiPost<{ success: boolean; message: string }>("/api/student/tokens/buy", {
+        tokenType,
+        hallId: selectedHallId,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to purchase token");
-      }
 
       toast.success(data.message || "Token purchased successfully!");
       router.refresh();
     } catch (error: any) {
-      toast.error(error.message || "Something went wrong");
+      const errMsg = error.response?.data?.error || error.message || "Something went wrong";
+      toast.error(errMsg);
     } finally {
       setIsLoading(null);
     }

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "react-hot-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { apiPost } from "@/lib/axios";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -63,27 +64,19 @@ export default function WalletClient({ balance, transactions, recharges }: Walle
 
     setIsLoading(true);
     try {
-      const res = await fetch("/api/student/recharge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: Number(formData.amount),
-          provider: formData.provider,
-          transactionId: formData.transactionId.trim(),
-        }),
+      const data = await apiPost<{ success: boolean; message: string }>("/api/student/recharge", {
+        amount: Number(formData.amount),
+        provider: formData.provider,
+        transactionId: formData.transactionId.trim(),
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to submit request");
-      }
 
       toast.success(data.message || "Recharge request submitted successfully!");
       setFormData({ amount: "", provider: "BKASH", transactionId: "" });
       router.refresh();
       setActiveTab("recharge");
     } catch (error: any) {
-      toast.error(error.message || "Something went wrong");
+      const errMsg = error.response?.data?.error || error.message || "Something went wrong";
+      toast.error(errMsg);
     } finally {
       setIsLoading(false);
     }
